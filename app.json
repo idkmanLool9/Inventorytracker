@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Voorraadbeheer",
+    "slug": "inventorytracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.inventorytracker",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Toegang tot de camera is nodig om barcodes te scannen.",
+        "NSPhotoLibraryUsageDescription": "Toegang tot foto's is nodig om productafbeeldingen toe te voegen."
+      }
+    },
+    "android": {
+      "package": "com.example.inventorytracker",
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-barcode-scanner",
+        { "cameraPermission": "Toestaan om barcodes te scannen." }
+      ],
+      [
+        "expo-camera",
+        { "cameraPermission": "Toestaan om foto's van producten te maken." }
+      ],
+      [
+        "expo-image-picker",
+        { "photosPermission": "Toestaan om productafbeeldingen te kiezen." }
+      ]
+    ],
+    "extra": {
+      "shopifyDomain": "",
+      "shopifyAccessToken": ""
+    }
+  }
+}
