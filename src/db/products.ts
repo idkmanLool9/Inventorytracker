@@ -15,6 +15,7 @@ type ProductRow = {
   location_id: string | null;
   photo_uri: string | null;
   shopify_product_id: string | null;
+  shopify_inventory_item_id: string | null;
   archived: number;
   created_at: string;
   updated_at: string;
@@ -35,6 +36,7 @@ function rowToProduct(r: ProductRow): Product {
     locationId: r.location_id,
     photoUri: r.photo_uri,
     shopifyProductId: r.shopify_product_id,
+    shopifyInventoryItemId: r.shopify_inventory_item_id,
     archived: !!r.archived,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -90,7 +92,8 @@ export async function upsertProduct(input: ProductInput): Promise<Product> {
       `UPDATE products SET
          name = ?, sku = ?, barcode = ?, category_id = ?,
          cost_price = ?, sale_price = ?, min_stock = ?, location_id = ?,
-         photo_uri = ?, shopify_product_id = ?, archived = ?, updated_at = ?
+         photo_uri = ?, shopify_product_id = ?, shopify_inventory_item_id = ?,
+         archived = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.name,
@@ -103,6 +106,7 @@ export async function upsertProduct(input: ProductInput): Promise<Product> {
         input.locationId ?? null,
         input.photoUri ?? null,
         input.shopifyProductId ?? null,
+        input.shopifyInventoryItemId ?? null,
         input.archived ? 1 : 0,
         now,
         id,
@@ -113,8 +117,8 @@ export async function upsertProduct(input: ProductInput): Promise<Product> {
       `INSERT INTO products (
          id, name, sku, barcode, category_id, cost_price, sale_price,
          stock, min_stock, location_id, photo_uri, shopify_product_id,
-         archived, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         shopify_inventory_item_id, archived, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.name,
@@ -128,6 +132,7 @@ export async function upsertProduct(input: ProductInput): Promise<Product> {
         input.locationId ?? null,
         input.photoUri ?? null,
         input.shopifyProductId ?? null,
+        input.shopifyInventoryItemId ?? null,
         input.archived ? 1 : 0,
         now,
         now,
@@ -159,6 +164,7 @@ export async function listVariants(productId: UUID): Promise<ProductVariant[]> {
     costPrice: r.cost_price,
     salePrice: r.sale_price,
     shopifyVariantId: r.shopify_variant_id,
+    shopifyInventoryItemId: r.shopify_inventory_item_id,
   }));
 }
 
@@ -168,7 +174,8 @@ export async function upsertVariant(v: Omit<ProductVariant, 'id'> & { id?: UUID 
   if (existing) {
     await exec(
       `UPDATE product_variants SET sku=?, barcode=?, option_name=?, option_value=?,
-        stock=?, cost_price=?, sale_price=?, shopify_variant_id=? WHERE id=?`,
+        stock=?, cost_price=?, sale_price=?, shopify_variant_id=?,
+        shopify_inventory_item_id=? WHERE id=?`,
       [
         v.sku,
         v.barcode ?? null,
@@ -178,14 +185,16 @@ export async function upsertVariant(v: Omit<ProductVariant, 'id'> & { id?: UUID 
         v.costPrice ?? null,
         v.salePrice ?? null,
         v.shopifyVariantId ?? null,
+        v.shopifyInventoryItemId ?? null,
         id,
       ]
     );
   } else {
     await exec(
       `INSERT INTO product_variants
-         (id, product_id, sku, barcode, option_name, option_value, stock, cost_price, sale_price, shopify_variant_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, product_id, sku, barcode, option_name, option_value, stock, cost_price, sale_price,
+          shopify_variant_id, shopify_inventory_item_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         v.productId,
@@ -197,6 +206,7 @@ export async function upsertVariant(v: Omit<ProductVariant, 'id'> & { id?: UUID 
         v.costPrice ?? null,
         v.salePrice ?? null,
         v.shopifyVariantId ?? null,
+        v.shopifyInventoryItemId ?? null,
       ]
     );
   }

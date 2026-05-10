@@ -8,7 +8,9 @@ export type RootStackParamList = {
   StockOut: { productId?: string };
   StockCount: undefined;
   ShopifySettings: undefined;
+  ShopifyLocations: undefined;
   SyncQueue: undefined;
+  BatchScan: { mode: 'in' | 'out' };
 };
 
 export type TabsParamList = {

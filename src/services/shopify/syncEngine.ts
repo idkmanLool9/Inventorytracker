@@ -1,23 +1,29 @@
 import { v4 as uuid } from 'uuid';
 import { all, exec, first, transaction } from '@/db';
 import { ShopifyConfig, SyncQueueItem, SyncOperation } from '@/types';
-import { ShopifyClient, ShopifyProductDTO } from './client';
-import { getProduct, upsertProduct } from '@/db/products';
+import {
+  ShopifyClient,
+  ShopifyProductDTO,
+  ShopifyVariantDTO,
+} from './client';
+import { getProduct, upsertProduct, upsertVariant, listVariants } from '@/db/products';
+import {
+  getDefaultShopifyLocation,
+  listShopifyLocations,
+  upsertShopifyLocation,
+} from '@/db/shopifyLocations';
 
 /**
- * Local-first Shopify sync engine.
+ * Local-first Shopify sync engine (REST 2024-04).
  *
- * Strategy:
- *  - Writes go straight to SQLite. Each write also pushes a job onto the
- *    `sync_queue` table.
- *  - `processQueue()` drains the queue with retry/backoff. Network errors
- *    keep the job alive; logic errors mark it failed (visible in UI).
- *  - Conflict resolution is last-write-wins: when pulling a Shopify product
- *    we compare timestamps. If the remote is newer, we apply it and log
- *    overwritten local fields to `conflict_log`.
+ *  - Writes go to SQLite first; an outbound job is enqueued in `sync_queue`.
+ *  - `processQueue()` drains the queue, with attempt counting and a
+ *    max-retry cap that flips a job to `failed` (visible in the UI).
+ *  - Conflict resolution: last-write-wins, with overwritten fields logged
+ *    to `conflict_log` so the user can audit them later.
  *
- * The engine is exported as plain functions so it stays easy to unit-test
- * against a mocked ShopifyClient.
+ * Functions are exported individually so unit tests can replace the
+ * underlying DB and client with mocks.
  */
 
 const MAX_ATTEMPTS = 5;
@@ -58,48 +64,77 @@ export async function clearQueue(): Promise<void> {
 }
 
 /**
- * Run a full sync: pull catalogue, then drain the outbound queue.
- * Caller is responsible for `cfg.enabled` check (UI layer).
+ * Refresh the locally cached list of Shopify locations and seed defaults.
+ * The first location returned is marked default if none is set yet.
+ */
+export async function syncLocations(cfg: ShopifyConfig): Promise<void> {
+  const client = new ShopifyClient(cfg);
+  const remote = await client.listLocations();
+  const existing = await listShopifyLocations();
+  const hasDefault = existing.some((l) => l.isDefault);
+  for (let i = 0; i < remote.length; i++) {
+    const r = remote[i];
+    const prev = existing.find((l) => l.id === r.id);
+    await upsertShopifyLocation({
+      id: r.id,
+      name: r.name,
+      localLocationId: prev?.localLocationId ?? null,
+      isDefault: prev?.isDefault ?? (!hasDefault && i === 0),
+    });
+  }
+}
+
+/**
+ * Full sync: locations, then pull catalogue, then drain outbound queue.
  */
 export async function runFullSync(cfg: ShopifyConfig): Promise<void> {
+  await syncLocations(cfg);
+
   const client = new ShopifyClient(cfg);
   const remote = await client.listProducts(100);
   for (const p of remote) {
     await applyRemoteProduct(p);
   }
+
   await processQueue(cfg);
 }
 
 /**
- * Apply a single Shopify product to local SQLite using last-write-wins.
- * If the local copy is newer, we log a conflict and keep the local version.
+ * Apply a single Shopify product locally. Last-write-wins on the top-level
+ * fields; per-variant rows are upserted with their `inventory_item_id`
+ * preserved so subsequent stock pushes know what to set.
+ *
+ * The `now` param is injected for deterministic tests.
  */
-export async function applyRemoteProduct(remote: ShopifyProductDTO): Promise<void> {
-  // We use the first variant for top-level price/sku; richer mapping would
-  // populate `product_variants` for products with multiple variants.
+export async function applyRemoteProduct(
+  remote: ShopifyProductDTO,
+  now: string = new Date().toISOString()
+): Promise<void> {
   const v0 = remote.variants[0];
   if (!v0) return;
 
-  const existing = await first<any>('SELECT * FROM products WHERE shopify_product_id = ?', [
-    remote.id,
-  ]);
-  const remoteUpdated = new Date().toISOString();
+  const existing = await first<any>(
+    'SELECT * FROM products WHERE shopify_product_id = ?',
+    [remote.id]
+  );
 
   if (!existing) {
-    await upsertProduct({
+    const saved = await upsertProduct({
       name: remote.title,
-      sku: v0.sku,
+      sku: v0.sku || `shopify-${v0.id}`,
       barcode: v0.barcode ?? null,
       costPrice: 0,
       salePrice: Number(v0.price),
       stock: v0.inventory_quantity,
       minStock: 0,
       shopifyProductId: remote.id,
+      shopifyInventoryItemId: v0.inventory_item_id,
     });
+    await syncVariants(saved.id, remote.variants);
     return;
   }
 
-  // Conflict detection: log changes that the remote overrides.
+  const remoteTimestamp = remote.updated_at ?? now;
   const fieldDiffs: Array<{ field: string; local: string; remote: string }> = [];
   if (existing.name !== remote.title)
     fieldDiffs.push({ field: 'name', local: existing.name, remote: remote.title });
@@ -110,30 +145,32 @@ export async function applyRemoteProduct(remote: ShopifyProductDTO): Promise<voi
       remote: v0.price,
     });
 
-  const localIsNewer = existing.updated_at > remoteUpdated;
-  if (localIsNewer) {
-    for (const d of fieldDiffs) {
-      await exec(
-        `INSERT INTO conflict_log (id, product_id, field, local_value, remote_value, resolution, resolved_at)
-         VALUES (?, ?, ?, ?, ?, 'local_wins', ?)`,
-        [uuid(), existing.id, d.field, d.local, d.remote, remoteUpdated]
-      );
-    }
-    return;
-  }
-
+  const localIsNewer = existing.updated_at > remoteTimestamp;
+  const resolution = localIsNewer ? 'local_wins' : 'remote_wins';
   for (const d of fieldDiffs) {
     await exec(
       `INSERT INTO conflict_log (id, product_id, field, local_value, remote_value, resolution, resolved_at)
-       VALUES (?, ?, ?, ?, ?, 'remote_wins', ?)`,
-      [uuid(), existing.id, d.field, d.local, d.remote, remoteUpdated]
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [uuid(), existing.id, d.field, d.local, d.remote, resolution, remoteTimestamp]
     );
+  }
+
+  if (localIsNewer) {
+    // Still attach the inventory item id so future pushes work.
+    if (!existing.shopify_inventory_item_id) {
+      await exec(
+        'UPDATE products SET shopify_inventory_item_id = ?, updated_at = ? WHERE id = ?',
+        [v0.inventory_item_id, now, existing.id]
+      );
+    }
+    await syncVariants(existing.id, remote.variants);
+    return;
   }
 
   await upsertProduct({
     id: existing.id,
     name: remote.title,
-    sku: v0.sku,
+    sku: v0.sku || existing.sku,
     barcode: v0.barcode ?? null,
     categoryId: existing.category_id,
     costPrice: existing.cost_price,
@@ -143,13 +180,36 @@ export async function applyRemoteProduct(remote: ShopifyProductDTO): Promise<voi
     locationId: existing.location_id,
     photoUri: existing.photo_uri,
     shopifyProductId: remote.id,
+    shopifyInventoryItemId: v0.inventory_item_id,
   });
+  await syncVariants(existing.id, remote.variants);
+}
+
+async function syncVariants(productId: string, remoteVariants: ShopifyVariantDTO[]) {
+  if (remoteVariants.length <= 1) return; // single-variant products are represented top-level
+  const existing = await listVariants(productId);
+  for (const rv of remoteVariants) {
+    const local = existing.find((v) => v.shopifyVariantId === rv.id);
+    await upsertVariant({
+      id: local?.id,
+      productId,
+      sku: rv.sku || `shopify-${rv.id}`,
+      barcode: rv.barcode ?? null,
+      optionName: 'Variant',
+      optionValue: rv.option1 ?? rv.option2 ?? rv.sku,
+      stock: rv.inventory_quantity,
+      costPrice: null,
+      salePrice: Number(rv.price),
+      shopifyVariantId: rv.id,
+      shopifyInventoryItemId: rv.inventory_item_id,
+    });
+  }
 }
 
 /**
  * Drain the outbound queue. Each job that fails with a transient error
- * stays `pending` and the attempt counter increments. Past `MAX_ATTEMPTS`
- * we mark it failed so it doesn't block the rest of the queue.
+ * stays `pending` and the attempt counter increments. Once past
+ * `MAX_ATTEMPTS`, the job is marked `failed` so it doesn't block others.
  */
 export async function processQueue(cfg: ShopifyConfig): Promise<void> {
   const client = new ShopifyClient(cfg);
@@ -158,11 +218,10 @@ export async function processQueue(cfg: ShopifyConfig): Promise<void> {
   );
   for (const job of jobs) {
     await transaction(async () => {
-      await exec('UPDATE sync_queue SET status = ?, attempts = attempts + 1, updated_at = ? WHERE id = ?', [
-        'in_progress',
-        new Date().toISOString(),
-        job.id,
-      ]);
+      await exec(
+        'UPDATE sync_queue SET status = ?, attempts = attempts + 1, updated_at = ? WHERE id = ?',
+        ['in_progress', new Date().toISOString(), job.id]
+      );
     });
 
     try {
@@ -188,16 +247,63 @@ async function runJob(client: ShopifyClient, job: any): Promise<void> {
   switch (job.operation as SyncOperation) {
     case 'push_stock': {
       const product = await getProduct(payload.productId);
-      if (!product?.shopifyProductId) throw new Error('Geen Shopify-product gekoppeld');
-      // Real impl needs inventory_item_id + location_id mapping;
-      // this is left as the integration point.
-      // await client.setInventoryLevel(itemId, locationId, payload.newStock);
+      if (!product) throw new Error('Product niet gevonden');
+      if (!product.shopifyInventoryItemId) {
+        throw new Error('Geen Shopify-inventory-item gekoppeld aan dit product');
+      }
+      const loc = await getDefaultShopifyLocation();
+      if (!loc) throw new Error('Geen Shopify-locatie geconfigureerd');
+      await client.setInventoryLevel(
+        product.shopifyInventoryItemId,
+        loc.id,
+        product.stock
+      );
       return;
     }
     case 'push_product': {
       const product = await getProduct(payload.productId);
       if (!product) throw new Error('Product niet gevonden');
-      // POST/PUT /products.json — left as integration point.
+
+      if (product.shopifyProductId) {
+        const updated = await client.updateProduct({
+          id: product.shopifyProductId,
+          title: product.name,
+          variants: [
+            {
+              sku: product.sku,
+              barcode: product.barcode ?? null,
+              price: String(product.salePrice),
+            },
+          ],
+        });
+        // Persist any new inventory_item_id we got back
+        const v0 = updated.variants[0];
+        if (v0 && v0.inventory_item_id !== product.shopifyInventoryItemId) {
+          await upsertProduct({
+            ...product,
+            shopifyInventoryItemId: v0.inventory_item_id,
+          });
+        }
+        return;
+      }
+
+      const created = await client.createProduct({
+        title: product.name,
+        status: 'active',
+        variants: [
+          {
+            sku: product.sku,
+            barcode: product.barcode ?? null,
+            price: String(product.salePrice),
+          },
+        ],
+      });
+      const v0 = created.variants[0];
+      await upsertProduct({
+        ...product,
+        shopifyProductId: created.id,
+        shopifyInventoryItemId: v0?.inventory_item_id ?? null,
+      });
       return;
     }
     case 'pull_product': {

@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Haptics from 'expo-haptics';
 
 import { RootStackParamList } from '@/navigation/types';
 import { Input } from '@/components/Input';
@@ -12,6 +13,7 @@ import { getProduct, findByBarcode } from '@/db/products';
 import { Product } from '@/types';
 import { useAuthStore } from '@/store/authStore';
 import { useShopifyStore } from '@/store/shopifyStore';
+import { normalizeBarcode } from '@/utils/barcode';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'StockIn'>;
 type Rt = RouteProp<RootStackParamList, 'StockIn'>;
@@ -29,18 +31,25 @@ export function StockInScreen() {
   const [batch, setBatch] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const qtyRef = useRef<TextInput>(null);
 
   useEffect(() => {
     if (route.params?.productId) {
-      getProduct(route.params.productId).then(setProduct);
+      getProduct(route.params.productId).then((p) => {
+        setProduct(p);
+        if (p) setTimeout(() => qtyRef.current?.focus(), 100);
+      });
     }
   }, [route.params?.productId]);
 
   const lookup = async () => {
-    const p = await findByBarcode(barcode.trim());
+    const p = await findByBarcode(normalizeBarcode(barcode));
     if (p) {
       setProduct(p);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setTimeout(() => qtyRef.current?.focus(), 100);
     } else {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Niet gevonden', `Geen product met barcode ${barcode}`);
     }
   };
@@ -69,6 +78,7 @@ export function StockInScreen() {
       });
       const updated = await getProduct(product.id);
       if (updated) await pushStock(updated.id, updated.stock);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     } catch (e) {
       Alert.alert('Fout', (e as Error).message);
@@ -86,9 +96,16 @@ export function StockInScreen() {
             value={barcode}
             onChangeText={setBarcode}
             keyboardType="number-pad"
+            autoFocus
             onSubmitEditing={lookup}
           />
           <Button title="Zoek product" variant="secondary" onPress={lookup} />
+          <Button
+            title="Batch scannen (snelle ontvangst)"
+            variant="ghost"
+            onPress={() => navigation.navigate('BatchScan', { mode: 'in' })}
+            style={{ marginTop: spacing.sm }}
+          />
         </View>
       ) : (
         <View>
@@ -98,7 +115,14 @@ export function StockInScreen() {
         </View>
       )}
 
-      <Input label="Aantal" value={qty} onChangeText={setQty} keyboardType="number-pad" />
+      <Input
+        ref={qtyRef as any}
+        label="Aantal"
+        value={qty}
+        onChangeText={setQty}
+        keyboardType="number-pad"
+        selectTextOnFocus
+      />
       <Input label="Leverancier (optioneel)" value={supplier} onChangeText={setSupplier} />
       <Input label="Batchnummer (optioneel)" value={batch} onChangeText={setBatch} />
       <Input label="Notitie (optioneel)" value={note} onChangeText={setNote} multiline />

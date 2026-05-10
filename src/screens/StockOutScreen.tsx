@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Haptics from 'expo-haptics';
 
 import { RootStackParamList } from '@/navigation/types';
 import { Input } from '@/components/Input';
@@ -12,6 +13,7 @@ import { findByBarcode, getProduct } from '@/db/products';
 import { MovementType, Product } from '@/types';
 import { useAuthStore } from '@/store/authStore';
 import { useShopifyStore } from '@/store/shopifyStore';
+import { normalizeBarcode } from '@/utils/barcode';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'StockOut'>;
 type Rt = RouteProp<RootStackParamList, 'StockOut'>;
@@ -34,15 +36,27 @@ export function StockOutScreen() {
   const [type, setType] = useState<MovementType>('out_sale');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const qtyRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    if (route.params?.productId) getProduct(route.params.productId).then(setProduct);
+    if (route.params?.productId) {
+      getProduct(route.params.productId).then((p) => {
+        setProduct(p);
+        if (p) setTimeout(() => qtyRef.current?.focus(), 100);
+      });
+    }
   }, [route.params?.productId]);
 
   const lookup = async () => {
-    const p = await findByBarcode(barcode.trim());
-    if (p) setProduct(p);
-    else Alert.alert('Niet gevonden', `Geen product met barcode ${barcode}`);
+    const p = await findByBarcode(normalizeBarcode(barcode));
+    if (p) {
+      setProduct(p);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setTimeout(() => qtyRef.current?.focus(), 100);
+    } else {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Niet gevonden', `Geen product met barcode ${barcode}`);
+    }
   };
 
   const handleSave = async () => {
@@ -64,6 +78,7 @@ export function StockOutScreen() {
       });
       const updated = await getProduct(product.id);
       if (updated) await pushStock(updated.id, updated.stock);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     } catch (e) {
       Alert.alert('Fout', (e as Error).message);
@@ -81,9 +96,16 @@ export function StockOutScreen() {
             value={barcode}
             onChangeText={setBarcode}
             keyboardType="number-pad"
+            autoFocus
             onSubmitEditing={lookup}
           />
           <Button title="Zoek product" variant="secondary" onPress={lookup} />
+          <Button
+            title="Batch scannen (snelle verkoop)"
+            variant="ghost"
+            onPress={() => navigation.navigate('BatchScan', { mode: 'out' })}
+            style={{ marginTop: spacing.sm }}
+          />
         </View>
       ) : (
         <View>
@@ -108,7 +130,14 @@ export function StockOutScreen() {
         ))}
       </View>
 
-      <Input label="Aantal" value={qty} onChangeText={setQty} keyboardType="number-pad" />
+      <Input
+        ref={qtyRef as any}
+        label="Aantal"
+        value={qty}
+        onChangeText={setQty}
+        keyboardType="number-pad"
+        selectTextOnFocus
+      />
       <Input label="Notitie (optioneel)" value={note} onChangeText={setNote} multiline />
       <Button title="Uitboeken" variant="danger" onPress={handleSave} loading={saving} />
     </ScrollView>

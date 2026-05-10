@@ -69,6 +69,12 @@ export function SettingsScreen() {
           style={{ marginTop: spacing.md }}
         />
         <Button
+          title="Locatie-mapping"
+          variant="secondary"
+          onPress={() => navigation.navigate('ShopifyLocations')}
+          style={{ marginTop: spacing.sm }}
+        />
+        <Button
           title="Sync-wachtrij"
           variant="secondary"
           onPress={() => navigation.navigate('SyncQueue')}

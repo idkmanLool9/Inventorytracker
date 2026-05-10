@@ -38,6 +38,7 @@ export interface Product {
   locationId?: UUID | null;
   photoUri?: string | null;
   shopifyProductId?: string | null;
+  shopifyInventoryItemId?: string | null;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -55,6 +56,14 @@ export interface ProductVariant {
   costPrice?: number | null;
   salePrice?: number | null;
   shopifyVariantId?: string | null;
+  shopifyInventoryItemId?: string | null;
+}
+
+export interface ShopifyLocationMapping {
+  id: string; // Shopify location id
+  name: string;
+  localLocationId?: string | null;
+  isDefault: boolean;
 }
 
 export type MovementType =

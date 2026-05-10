@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 import { StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
 import { colors, radii, spacing, typography } from '@/theme';
 
@@ -7,11 +7,15 @@ interface Props extends TextInputProps {
   error?: string | null;
 }
 
-export function Input({ label, error, style, ...rest }: Props) {
+export const Input = forwardRef<TextInput, Props>(function Input(
+  { label, error, style, ...rest },
+  ref
+) {
   return (
     <View style={styles.wrap}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <TextInput
+        ref={ref}
         placeholderTextColor={colors.muted}
         style={[styles.input, error ? styles.inputError : null, style]}
         {...rest}
@@ -19,7 +23,7 @@ export function Input({ label, error, style, ...rest }: Props) {
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: spacing.md },

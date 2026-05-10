@@ -17,6 +17,7 @@ Een mobiele voorraadbeheer-app voor een fysieke winkel, gebouwd met **React Nati
 - Barcode-scan om snel producten te vinden of toe te voegen
 - Voorraad in (ontvangst), met optionele leverancier en batchnummer
 - Voorraad uit (verkoop / verlies / schade) met redencode
+- **Batch-scanmodus**: continue scanner, +1 per scan, haptische feedback, undo per regel
 - Geleide voorraadtelling die werkelijk vs systeem vergelijkt
 - Overplaatsing tussen locaties
 - Volledige audit-log van iedere mutatie (timestamp + gebruiker)
@@ -28,10 +29,13 @@ Een mobiele voorraadbeheer-app voor een fysieke winkel, gebouwd met **React Nati
 
 ### Shopify-koppeling (optioneel)
 - Per winkel aan/uit te zetten in Instellingen → Shopify
-- Twee-richtingen-synchronisatie: producten ophalen uit Shopify, voorraad terugsturen
+- Twee-richtingen-synchronisatie via Shopify Admin REST API (2024-04):
+  - Pull: `GET /products.json`, `GET /locations.json`
+  - Push: `POST/PUT /products.json`, `POST /inventory_levels/set.json`
 - Offline-first: wijzigingen gaan in een lokale `sync_queue`, retry met backoff (max 5 pogingen)
 - Conflict resolutie: laatste-schrijver-wint met zichtbare conflict-log
-- Locatie-mapping van Shopify-locaties naar fysieke winkellocaties
+- Locatie-mapping: Shopify-locaties ↔ fysieke winkellocaties in Instellingen → Locatie-mapping
+- `inventory_item_id` wordt automatisch op producten/varianten bewaard zodat stock-pushes werken
 
 ### Rollen & rechten
 - **Eigenaar** ziet financiële gegevens

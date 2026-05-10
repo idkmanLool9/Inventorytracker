@@ -116,8 +116,24 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
-  // Future migrations go here, e.g.:
-  // { version: 2, name: 'add-suppliers-table', up: `CREATE TABLE suppliers ...` },
+  {
+    version: 2,
+    name: 'shopify-inventory-mapping',
+    up: `
+      ALTER TABLE product_variants ADD COLUMN shopify_inventory_item_id TEXT;
+
+      CREATE TABLE IF NOT EXISTS shopify_locations (
+        id TEXT PRIMARY KEY,                 -- Shopify location ID
+        name TEXT NOT NULL,
+        local_location_id TEXT REFERENCES locations(id) ON DELETE SET NULL,
+        is_default INTEGER NOT NULL DEFAULT 0
+      );
+
+      -- Track top-level inventory_item_id for products without variants
+      -- (so single-variant Shopify products can still push stock).
+      ALTER TABLE products ADD COLUMN shopify_inventory_item_id TEXT;
+    `,
+  },
 ];
 
 async function getCurrentVersion(): Promise<number> {

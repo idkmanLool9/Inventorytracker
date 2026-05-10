@@ -14,7 +14,9 @@ import { StockInScreen } from '@/screens/StockInScreen';
 import { StockOutScreen } from '@/screens/StockOutScreen';
 import { StockCountScreen } from '@/screens/StockCountScreen';
 import { ShopifySettingsScreen } from '@/screens/ShopifySettingsScreen';
+import { ShopifyLocationsScreen } from '@/screens/ShopifyLocationsScreen';
 import { SyncQueueScreen } from '@/screens/SyncQueueScreen';
+import { BatchScanScreen } from '@/screens/BatchScanScreen';
 import { colors } from '@/theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -86,9 +88,19 @@ export function RootNavigator() {
         options={{ title: 'Shopify-koppeling' }}
       />
       <Stack.Screen
+        name="ShopifyLocations"
+        component={ShopifyLocationsScreen}
+        options={{ title: 'Shopify-locaties' }}
+      />
+      <Stack.Screen
         name="SyncQueue"
         component={SyncQueueScreen}
         options={{ title: 'Sync-wachtrij' }}
+      />
+      <Stack.Screen
+        name="BatchScan"
+        component={BatchScanScreen}
+        options={{ title: 'Batch scannen' }}
       />
     </Stack.Navigator>
   );
